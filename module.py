@@ -563,15 +563,21 @@ class Module(ModuleBase):
             context.end_block()
 
             for i in range(oparg):
-                context.insert_line('v = PyTuple_GET_ITEM(x, %d);' % (oparg - i - 1))
-                context.insert_line('w = POP();')
+                context.insert_line('v = PyTuple_GET_ITEM(x, %d);' % i)
+                context.insert_line('w = PEEK(%d);' % (oparg - i))
                 context.insert_line('err = PyDict_SetItem(u, v, w);')
-                context.insert_line('Py_DECREF(w);')
+
                 context.insert_line('if (err != 0)')
                 context.begin_block()
                 context.insert_line('Py_DECREF(u);')
                 context.insert_handle_error(line, label)
                 context.end_block()
+
+            context.insert_line('Py_DECREF(x); /* keys */')
+
+            for i in range(oparg):
+                context.insert_line('x = POP();')
+                context.insert_line('Py_DECREF(x);')
 
             context.insert_line('PUSH(u);')
 
@@ -755,6 +761,36 @@ class Module(ModuleBase):
             context.insert_line('goto label_%d;' % oparg)
             context.end_block()
 
+        elif op == BEFORE_ASYNC_WITH:
+            context.begin_block()
+            context.insert_line('u = TOP();')
+            context.insert_line('v = PyObject_GetAttrString(u, "__aexit__");')
+            context.insert_line('if (v == NULL) {')
+            context.insert_line('  if (!PyErr_Occurred()) {PyErr_SetString(PyExc_AttributeError, "__aexit__");}')
+            context.insert_handle_error(line, label)
+            context.insert_line('}')
+            context.insert_line('SET_TOP(v);')
+            context.insert_line('w = PyObject_GetAttrString(u, "__aenter__");')
+            context.insert_line('Py_DECREF(u);')
+            context.insert_line('if (w == NULL) {')
+            context.insert_line('  if (!PyErr_Occurred()) {PyErr_SetString(PyExc_AttributeError, "__aenter__");}')
+            context.insert_handle_error(line, label)
+            context.insert_line('}')
+            context.insert_line('x = PyObject_CallFunctionObjArgs(w, NULL);')
+            context.insert_line('Py_DECREF(w);')
+            context.insert_line('if (x == NULL) {')
+            context.insert_handle_error(line, label)
+            context.insert_line('}')
+            context.insert_line('PUSH(x);')
+            context.end_block()
+
+        elif op == SETUP_ASYNC_WITH:
+            context.begin_block()
+            context.insert_line('void* __addr;')
+            context.insert_get_address(label + oparg + 2)
+            context.insert_line('PyFrame_BlockSetup(f, SETUP_FINALLY, __addr, STACK_LEVEL() - 1);')
+            context.end_block()
+
         elif op == GET_AWAITABLE:
             context.add_decl_once('type', 'PyTypeObject*', None, False)
             context.begin_block()
@@ -773,7 +809,7 @@ class Module(ModuleBase):
                 context.begin_block()
                 context.insert_line('type = Py_TYPE(u);')
                 context.insert_line('if (type->tp_as_async == NULL || type->tp_as_async->am_await == NULL) {')
-                context.insert_line('PyErr_Format(PyExc_TypeError, %s, type->tp_name);' % msg)
+                context.insert_line('PyErr_Format(PyExc_TypeError, "%s", type->tp_name);' % msg)
                 context.insert_line('}')
                 context.end_block()
 
@@ -792,6 +828,26 @@ class Module(ModuleBase):
             context.insert_line('if (v == NULL) {')
             context.insert_handle_error(line, label)
             context.insert_line('}')
+            context.end_block()
+
+        elif op == GET_AITER:
+            context.begin_block()
+            context.insert_line('u = POP();')
+            context.insert_line('v = __pypperoni_IMPL_get_aiter(u);')
+            context.insert_line('if (v == NULL) {')
+            context.insert_handle_error(line, label)
+            context.insert_line('}')
+            context.insert_line('PUSH(v);')
+            context.end_block()
+
+        elif op == GET_ANEXT:
+            context.begin_block()
+            context.insert_line('u = TOP();')
+            context.insert_line('v = __pypperoni_IMPL_get_anext(u);')
+            context.insert_line('if (v == NULL) {')
+            context.insert_handle_error(line, label)
+            context.insert_line('}')
+            context.insert_line('PUSH(v);')
             context.end_block()
 
         elif op == GET_ITER:
